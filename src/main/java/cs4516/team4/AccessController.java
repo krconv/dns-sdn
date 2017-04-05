@@ -95,14 +95,95 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 	}
 
+
+
 	/* (non-Javadoc)
 	 * @see net.floodlightcontroller.core.IOFMessageListener#receive(net.floodlightcontroller.core.IOFSwitch, org.projectfloodlight.openflow.protocol.OFMessage, net.floodlightcontroller.core.FloodlightContext)
 	 */
 	@Override
 	public net.floodlightcontroller.core.IListener.Command receive(IOFSwitch sw, OFMessage msg,
 			FloodlightContext cntx) {
-		// TODO Auto-generated method stub
-		return null;
+
+		switch (msg.getType()) {
+			case PACKET_IN:
+				Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
+		 
+				MacAddress srcMac = eth.getSourceMACAddress();
+				VlanVid vlanId = VlanVid.ofVlan(eth.getVlanID());
+		 
+				if (eth.getEtherType() == EthType.IPv4) {
+					IPv4 ipv4 = (IPv4) eth.getPayload();
+					 
+					byte[] ipOptions = ipv4.getOptions();
+					IPv4Address dstIp = ipv4.getDestinationAddress();
+					 
+					if (ipv4.getProtocol() == IpProtocol.TCP) {
+						TCP tcp = (TCP) ipv4.getPayload();
+		  
+						TransportPort srcPort = tcp.getSourcePort();
+						TransportPort dstPort = tcp.getDestinationPort();
+						short flags = tcp.getFlags();
+						 
+
+						if (CapabilitiesManager.getInstance().verifyRecord(dstIp) == CapabilitiesManager.Action.ALLOW) {
+							// TODO: ALLOW PACKET
+						} else {
+							// TODO: DROP PACKET
+						}
+						
+					} else if (ipv4.getProtocol() == IpProtocol.UDP) {
+						UDP udp = (UDP) ipv4.getPayload();
+		  
+						TransportPort srcPort = udp.getSourcePort();
+						TransportPort dstPort = udp.getDestinationPort();
+						
+						
+						long ttl = extractTTLfromDNS(udp);
+
+						byte[] newIP = CapabilitiesManager.getInstance().addRecord(ttl);
+
+						rewriteIPforDNS(udp,newIP);
+
+						// TODO: send PACKET_OUT with modified DNS
+						
+					}
+		 
+				} else if (eth.getEtherType() == EthType.ARP) {
+					
+					ARP arp = (ARP) eth.getPayload();
+		 
+					
+					boolean gratuitous = arp.isGratuitous();
+		 
+				} else {
+					// Not sure
+				}
+				break;
+			default:
+				break;
+		}
+		return Command.CONTINUE;
+	}
+
+	private void rewriteIPforDNS(UDP packet, byte[] newIP) {
+		byte[] rawPacket = packet.serialize();
+		int udpHeaderSize = 8; // bytes
+		int dnsHeaderSize = 18; // bytes
+
+		// TODO: we may want to add a verification of the DNS response type to make sure we aren't overwriting packets that don't correspond with an A record
+
+		int totalHead = udpHeaderSize + dnsHeaderSize;
+
+		for (int i = 0; i < newIP.length; i++) {
+			rawPacket[totalHead + i] = newIP[i];
+		}
+
+		packet.deserialize(rawPacket,0,packet.getLength());
+	}
+	private long extractTTLfromDNS(UDP packet) {
+		byte[] rawPacket = packet.serialize();
+		// TODO analyze to get TTL
+		return 0;
 	}
 
 }
