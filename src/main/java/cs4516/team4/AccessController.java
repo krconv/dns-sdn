@@ -180,10 +180,19 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 		packet.deserialize(rawPacket,0,packet.getLength());
 	}
-	private long extractTTLfromDNS(UDP packet) {
+	private int extractTTLfromDNS(UDP packet) {
 		byte[] rawPacket = packet.serialize();
-		// TODO analyze to get TTL
-		return 0;
+		int udpHeaderSize = 8; // bytes
+		int dnsOffset = 12; // bytes
+		int offset = udpHeaderSize + dnsOffset;
+
+		int result = 0;
+		result += (rawPacket[offset+0] << 24);
+		result += (rawPacket[offset+1] << 16);
+		result += (rawPacket[offset+2] << 8);
+		result += (rawPacket[offset+3]);
+
+		return result;
 	}
 
 }
