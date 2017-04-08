@@ -23,13 +23,16 @@ import net.floodlightcontroller.core.module.IFloodlightService;
  */
 public class AccessController implements IOFMessageListener, IFloodlightModule {
 
+	protected IFloodlightProviderService floodlightProvider;
+	protected Set<Long> macAddresses;
+	protected static Logger logger;
+
 	/* (non-Javadoc)
 	 * @see net.floodlightcontroller.core.IListener#getName()
 	 */
 	@Override
 	public String getName() {
-		// TODO Auto-generated method stub
-		return null;
+		return MACTracker.class.getSimpleName();
 	}
 
 	/* (non-Javadoc)
@@ -73,8 +76,10 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	 */
 	@Override
 	public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
-		// TODO Auto-generated method stub
-		return null;
+		Collection<Class<? extends IFloodlightService>> l =
+        	new ArrayList<Class<? extends IFloodlightService>>();
+	    l.add(IFloodlightProviderService.class);
+	    return l;
 	}
 
 	/* (non-Javadoc)
@@ -82,7 +87,9 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	 */
 	@Override
 	public void init(FloodlightModuleContext context) throws FloodlightModuleException {
-		// TODO Auto-generated method stub
+		floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
+	    macAddresses = new ConcurrentSkipListSet<Long>();
+	    logger = LoggerFactory.getLogger(MACTracker.class);
 
 	}
 
@@ -91,7 +98,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	 */
 	@Override
 	public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
-		// TODO Auto-generated method stub
+		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
 
 	}
 
@@ -127,8 +134,10 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 						if (CapabilitiesManager.getInstance().verifyRecord(dstIp) == CapabilitiesManager.Action.ALLOW) {
 							// TODO: ALLOW PACKET
+							System.out.println("Allowing packet to flow");
 						} else {
 							// TODO: DROP PACKET
+							System.out.println("Dropping packet!");
 						}
 						
 					} else if (ipv4.getProtocol() == IpProtocol.UDP) {
@@ -165,14 +174,18 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 		return Command.CONTINUE;
 	}
 
+		
+	private static final int UDP_HEAD_SIZE = 8; // bytes
+	private static final int DNS_OFFSET_DATA = 10; // bytes after name
+	private static final int DNS_OFFSET_TTL = 4; // bytes after name
+
 	private void rewriteIPforDNS(UDP packet, byte[] newIP) {
 		byte[] rawPacket = packet.serialize();
-		int udpHeaderSize = 8; // bytes
-		int dnsHeaderSize = 18; // bytes
+		int dnsHeaderSize = DNS_OFFSET_DATA + getDNSNameSize(rawPacket); // bytes
 
 		// TODO: we may want to add a verification of the DNS response type to make sure we aren't overwriting packets that don't correspond with an A record
 
-		int totalHead = udpHeaderSize + dnsHeaderSize;
+		int totalHead = UDP_HEAD_SIZE + dnsHeaderSize;
 
 		for (int i = 0; i < newIP.length; i++) {
 			rawPacket[totalHead + i] = newIP[i];
@@ -182,9 +195,8 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	}
 	private int extractTTLfromDNS(UDP packet) {
 		byte[] rawPacket = packet.serialize();
-		int udpHeaderSize = 8; // bytes
-		int dnsOffset = 12; // bytes
-		int offset = udpHeaderSize + dnsOffset;
+		int dnsOffset = DNS_OFFSET_TTL + getDNSNameSize(rawPacket); // bytes
+		int offset = UDP_HEAD_SIZE + dnsOffset;
 
 		int result = 0;
 		result += (rawPacket[offset+0] << 24);
@@ -193,6 +205,14 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 		result += (rawPacket[offset+3]);
 
 		return result;
+	}
+	private byte[] getDNSNameSize(byte[] rawPacket) {
+		int i = UDP_HEAD_SIZE;
+		byte current = rawPacket[i];
+		while (current != 0x00) {
+			current = rawPacket[++i];
+		}
+		return i + 1 - UDP_HEAD_SIZE;
 	}
 
 }
