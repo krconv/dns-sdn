@@ -202,7 +202,7 @@ public class DNS extends BasePacket {
 	 * @return The DNS type.
 	 */
 	public Type getType() {
-		return getFlags()[0] == 0x0 ? Type.QUERY : Type.RESPONSE;
+		return (getFlags()[0] & 0x80) == 0x0 ? Type.QUERY : Type.RESPONSE;
 	}
 
 	/**
