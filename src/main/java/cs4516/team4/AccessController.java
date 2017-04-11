@@ -183,45 +183,58 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 		if (sourceMac.equals(dnsMacAddress) || destMac.equals(dnsMacAddress)) { // dns
 																				// server
-			if (protocol != IpProtocol.UDP)
+			if (protocol != IpProtocol.UDP ) // let other modules handle udp packets
 				return Command.CONTINUE;
+			
+			 
 
 			UDP udp = (UDP) ip.getPayload();
 			if (udp.getSourcePort().getPort() == DNS.DNS_PORT || udp.getDestinationPort().getPort() == DNS.DNS_PORT) {
 				DNS dns = new DNS(udp.getPayload());
 				OFFactory factory = sw.getOFFactory();
 				logger.debug("DNS packet: " + dns.getType());
+
+				ArrayList<OFAction> actions = new ArrayList<OFAction>();
+				actions.add(factory.actions().buildOutput() // builder pattern used throughout
+						.setPort(udp.getSourcePort().getPort() == DNS.DNS_PORT ? OFPort.of(1) : OFPort.LOCAL) // raw types replaced with objects for type-checking and readability
+						.build()); // list of immutable OFAction objects
+				
 				if (dns.getType() == DNS.Type.RESPONSE) {
 					if (dns.getAnswerCount() > 0) {
-						logger.debug("Writing modified response...");
 						DNSResource answer = dns.getAnswers()[0];
-						answer.setIPv4Address(IPv4Address.of("1.2.3.4"));
+						answer.setIPv4Address(IPv4Address.of("10.45.4.11"));
+						logger.debug("Answer: " + answer.getIPv4Address());
+						udp.setPayload(dns);
+						dns.resetChecksum();
 					}
-					udp.setPayload(dns);
-					ArrayList<OFAction> actions = new ArrayList<OFAction>();
-					actions.add(factory.actions().buildOutput() // builder pattern used throughout
-							.setPort(OFPort.of(1)) // raw types replaced with objects for type-checking and readability
-							.build()); // list of immutable OFAction objects
-					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
+//					udp.setPayload(dns);
+//					ArrayList<OFAction> actions = new ArrayList<OFAction>();
+//					actions.add(factory.actions().buildOutput() // builder pattern used throughout
+//							.setPort(OFPort.of(1)) // raw types replaced with objects for type-checking and readability
+//							.build()); // list of immutable OFAction objects
+//					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
 				} else if (dns.getType() == DNS.Type.QUERY) {
-					logger.debug("Writing PACKET_MOD to allow incoming queries...");
-					ArrayList<OFAction> actions = new ArrayList<OFAction>();
-					actions.add(factory.actions().buildOutput() // builder pattern used throughout
-							.setPort(OFPort.LOCAL) // raw types replaced with objects for type-checking and readability
-							.build()); // list of immutable OFAction objects
-					OFFlowAdd flow = factory.buildFlowAdd()
-							.setMatch(factory.buildMatch()
-									.setExact(MatchField.IN_PORT, OFPort.of(1))
-									.build()) // immutable Match object
-						.setPriority(100)
-						.setActions(actions)
-						.setBufferId(OFBufferId.NO_BUFFER)
-						.setHardTimeout(10)
-						.build(); // immutable OFFlowMod; no lengths to set; no wildcards to set
-					sw.write(flow);
-
-					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).build());
+//					logger.debug("Writing PACKET_MOD to allow incoming queries...");
+//					ArrayList<OFAction> actions = new ArrayList<OFAction>();
+//					actions.add(factory.actions().buildOutput() // builder pattern used throughout
+//							.setPort(OFPort.LOCAL) // raw types replaced with objects for type-checking and readability
+//							.build()); // list of immutable OFAction objects
+//					OFFlowAdd flow = factory.buildFlowAdd()
+//							.setMatch(factory.buildMatch()
+//									.setExact(MatchField.IN_PORT, OFPort.of(1))
+//									.build()) // immutable Match object
+//						.setPriority(100)
+//						.setActions(actions)
+//						.setBufferId(OFBufferId.NO_BUFFER)
+//						.setHardTimeout(10)
+//						.build(); // immutable OFFlowMod; no lengths to set; no wildcards to set
+//					sw.write(flow);
+//
+//					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).build());
 				}
+				
+				sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
+				return Command.STOP;
 			}
 		} else if (sourceMac.equals(webserverMacAddress) || destMac.equals(webserverMacAddress)) { // web
 																									// server
