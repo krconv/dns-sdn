@@ -98,7 +98,6 @@ public class OFSwitchManager implements IOFSwitchManager, INewOFConnectionListen
 	private volatile OFControllerRole role;
 	private SwitchManagerCounters counters;
 
-	private ISyncService syncService;
 	private IStoreClient<DatapathId, SwitchSyncRepresentation> storeClient;
 	public static final String SWITCH_SYNC_STORE_NAME = OFSwitchManager.class.getCanonicalName() + ".stateStore";
 
@@ -647,7 +646,6 @@ public class OFSwitchManager implements IOFSwitchManager, INewOFConnectionListen
 		floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
 		debugEventService = context.getServiceImpl(IDebugEventService.class);
 		debugCounterService = context.getServiceImpl(IDebugCounterService.class);
-		syncService = context.getServiceImpl(ISyncService.class);
 
 		// Module variables
 		switchHandlers = new ConcurrentHashMap<DatapathId, OFSwitchHandshakeHandler>();
