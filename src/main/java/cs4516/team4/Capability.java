@@ -1,6 +1,8 @@
 
 package cs4516.team4;
 
+import java.util.Date;
+
 public class Capability {
 	public Date creation;
 	public long ttl; // in milliseconds

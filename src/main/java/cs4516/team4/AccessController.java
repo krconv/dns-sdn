@@ -3,19 +3,37 @@
  */
 package cs4516.team4;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 import org.projectfloodlight.openflow.protocol.OFMessage;
 import org.projectfloodlight.openflow.protocol.OFType;
+import org.projectfloodlight.openflow.types.EthType;
+import org.projectfloodlight.openflow.types.IPv4Address;
+import org.projectfloodlight.openflow.types.IpProtocol;
+import org.projectfloodlight.openflow.types.MacAddress;
+import org.projectfloodlight.openflow.types.TransportPort;
+import org.projectfloodlight.openflow.types.VlanVid;
+import org.slf4j.LoggerFactory;
 
+import ch.qos.logback.classic.Logger;
 import net.floodlightcontroller.core.FloodlightContext;
+import net.floodlightcontroller.core.IFloodlightProviderService;
 import net.floodlightcontroller.core.IOFMessageListener;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
+import net.floodlightcontroller.packet.ARP;
+import net.floodlightcontroller.packet.Ethernet;
+import net.floodlightcontroller.packet.IPv4;
+import net.floodlightcontroller.packet.PacketParsingException;
+import net.floodlightcontroller.packet.TCP;
+import net.floodlightcontroller.packet.UDP;
 
 /**
  * @author Team 4
@@ -32,7 +50,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	 */
 	@Override
 	public String getName() {
-		return MACTracker.class.getSimpleName();
+		return "CS4516";//MACTracker.class.getSimpleName();
 	}
 
 	/* (non-Javadoc)
@@ -89,7 +107,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	public void init(FloodlightModuleContext context) throws FloodlightModuleException {
 		floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
 	    macAddresses = new ConcurrentSkipListSet<Long>();
-	    logger = LoggerFactory.getLogger(MACTracker.class);
+//	    logger = LoggerFactory.getLogger(MACTracker.class);
 
 	}
 
@@ -132,7 +150,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 						short flags = tcp.getFlags();
 						 
 
-						if (CapabilitiesManager.getInstance().verifyRecord(dstIp) == CapabilitiesManager.Action.ALLOW) {
+						if (CapabilitiesManager.getInstance().verifyRecord(dstIp.getBytes()) == CapabilitiesManager.Action.ALLOW) {
 							// TODO: ALLOW PACKET
 							System.out.println("Allowing packet to flow");
 						} else {
@@ -151,7 +169,12 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 						byte[] newIP = CapabilitiesManager.getInstance().addRecord(ttl);
 
-						rewriteIPforDNS(udp,newIP);
+						try {
+							rewriteIPforDNS(udp,newIP);
+						} catch (PacketParsingException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
 
 						// TODO: send PACKET_OUT with modified DNS
 						
@@ -179,7 +202,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	private static final int DNS_OFFSET_DATA = 10; // bytes after name
 	private static final int DNS_OFFSET_TTL = 4; // bytes after name
 
-	private void rewriteIPforDNS(UDP packet, byte[] newIP) {
+	private void rewriteIPforDNS(UDP packet, byte[] newIP) throws PacketParsingException {
 		byte[] rawPacket = packet.serialize();
 		int dnsHeaderSize = DNS_OFFSET_DATA + getDNSNameSize(rawPacket); // bytes
 
@@ -206,7 +229,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 		return result;
 	}
-	private byte[] getDNSNameSize(byte[] rawPacket) {
+	private int getDNSNameSize(byte[] rawPacket) {
 		int i = UDP_HEAD_SIZE;
 		byte current = rawPacket[i];
 		while (current != 0x00) {

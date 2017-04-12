@@ -1,13 +1,15 @@
 
 package cs4516.team4;
 
+import java.util.HashMap;
+
 public class CapabilitiesManager {
 
 	public enum Action {
 		ALLOW,DROP
 	}
 
-	private static instance = new CapabilitiesManager();
+	private static CapabilitiesManager instance = new CapabilitiesManager();
 	public static CapabilitiesManager getInstance(){
 		return instance;
 	}
@@ -30,7 +32,7 @@ public class CapabilitiesManager {
 		Capability c = records.get(ip);
 		if (c != null && !c.isExpired()) 
 			return Action.ALLOW;
-		return Action.DENY;
+		return Action.DROP;
 	}
 
 	private byte[] generateIPInRange(){
