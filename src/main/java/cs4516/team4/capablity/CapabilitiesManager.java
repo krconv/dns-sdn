@@ -36,7 +36,7 @@ public class CapabilitiesManager {
 		return instance;
 	}
 	
-	private HashMap<byte[], Capability> records = new HashMap<>(); // records stored [client -> capability]
+	private HashMap<String, Capability> records = new HashMap<>(); // records stored [client -> capability]
 
 	/**
 	 * Adds a record for access from the current client.
@@ -46,8 +46,7 @@ public class CapabilitiesManager {
 	 */
 	public IPv4Address addRecord(int ttl) {
 		IPv4Address address = generateIPInRange();
-		
-		records.put(address.getBytes(), new Capability(address, ttl));
+		records.put(address.toString(), new Capability(address, ttl));
 		
 		return address;
 	}
@@ -58,7 +57,7 @@ public class CapabilitiesManager {
 	 * @return The number of seconds left on the record, or zero if expired.
 	 */
 	public int recordTimeLeft(IPv4Address address) {
-		Capability c = records.get(address.getBytes());
+		Capability c = records.get(address.toString());
 		if (c != null)
 			return c.getTimeLeft();
 		return 0;
@@ -81,7 +80,7 @@ public class CapabilitiesManager {
 	private IPv4Address generateIPInRange() {
 		IPv4Address address;
 		do {
-			address = IPv4Address.of("10.45.4." + Math.floor(Math.random() * 128 + 128));
+			address = IPv4Address.of("10.45.4." + (int) (Math.random() * 128 + 128));
 		} while (verifyRecord(address) == Action.ALLOW);
 		
 		return address;

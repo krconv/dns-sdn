@@ -12,7 +12,6 @@ import java.util.Map;
 import org.projectfloodlight.openflow.protocol.OFFactory;
 import org.projectfloodlight.openflow.protocol.OFFlowAdd;
 import org.projectfloodlight.openflow.protocol.OFMessage;
-import org.projectfloodlight.openflow.protocol.OFPacketIn;
 import org.projectfloodlight.openflow.protocol.OFType;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.MatchField;
@@ -39,6 +38,7 @@ import net.floodlightcontroller.core.module.IFloodlightService;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.packet.UDP;
+import net.floodlightcontroller.packet.TCP;
 
 /**
  * @author Team 4
@@ -174,14 +174,9 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	@Override
 	public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
 		Ethernet ethernet = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-		OFPacketIn packetIn = (OFPacketIn) msg;
-		OFPort portIn = packetIn.getInPort();
 
 		if (ethernet.getEtherType() != EthType.IPv4)
 			return Command.CONTINUE;
-
-		logger.debug(
-				"[PACKET_IN] Switch: " + ((InetSocketAddress) sw.getInetAddress()).getHostName() + " Port: " + portIn);
 
 		MacAddress sourceMac = ethernet.getSourceMACAddress();
 		MacAddress destMac = ethernet.getDestinationMACAddress();
@@ -189,6 +184,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 		IpProtocol protocol = ip.getProtocol();
 
 		if (protocol == IpProtocol.UDP && (sourceMac.equals(DNS_MAC_ADDRESS) || destMac.equals(DNS_MAC_ADDRESS))) { // dns
+			OFPort portIn = sourceMac.equals(DNS_MAC_ADDRESS) ? OFPort.LOCAL : OFPort.of(1);
 																												// server
 			if (portIn == OFPort.LOCAL) { // message originating from DNS server
 				UDP udp = (UDP) ip.getPayload();
@@ -201,7 +197,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 				ArrayList<OFAction> actions = new ArrayList<OFAction>();
 				// add an action to forward the packet
-				actions.add(factory.actions().buildOutput().setPort(OFPort.ALL).build());
+				actions.add(factory.actions().buildOutput().setPort(OFPort.of(1)).build());
 
 				if (dns.hasAnswer()) {
 					logger.debug("[DNS] Response to " + dns.getQueries()[0].getName());
@@ -227,9 +223,13 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 				sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
 				return Command.STOP;
 			}
-		} else if (sourceMac.equals(WEBSERVER_MAC_ADDRESS) || destMac.equals(WEBSERVER_MAC_ADDRESS)) { // web
+		} else if (protocol == IpProtocol.TCP && sourceMac.equals(WEBSERVER_MAC_ADDRESS) || destMac.equals(WEBSERVER_MAC_ADDRESS)) { // web
 																									// server
+			OFPort portIn = sourceMac.equals(WEBSERVER_MAC_ADDRESS) ? OFPort.LOCAL : OFPort.of(1);
 			if (portIn != OFPort.LOCAL) { // message originating from client
+				TCP tcp = (TCP) ip.getPayload();
+				if (tcp.getDestinationPort().getPort() != 80)
+					return Command.CONTINUE;
 				IPv4Address address = ip.getDestinationAddress();
 				CapabilitiesManager capabilities = CapabilitiesManager.getInstance();
 				logger.debug("[WEB] Request to " + address);
@@ -239,32 +239,33 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 				if (capabilities.verifyRecord(address) == CapabilitiesManager.Action.ALLOW) {
 					logger.debug("[WEB] Request allowed");
 					// add an action to forward the packet
-					actions.add(factory.actions().buildOutput().setPort(OFPort.ALL).build());
+					actions.add(factory.actions().buildOutput().setPort(OFPort.LOCAL).build());
 
 					// create a flow that will allow packets for the rest of the
 					// capability life time with a FLOW_MOD
-					OFFlowAdd flow = factory.buildFlowAdd()
-							.setMatch(factory.buildMatch().setExact(MatchField.IN_PORT, OFPort.of(1))
-									.setExact(MatchField.IPV4_DST, address).build())
-							.setActions(actions).setBufferId(OFBufferId.NO_BUFFER)
-							.setHardTimeout(capabilities.recordTimeLeft(address)).build();
-					sw.write(flow);
+					//OFFlowAdd flow = factory.buildFlowAdd()
+					//		.setMatch(factory.buildMatch().setExact(MatchField.IN_PORT, OFPort.of(1))
+					//				.setExact(MatchField.IPV4_DST, address).build())
+					//		.setActions(actions).setBufferId(OFBufferId.NO_BUFFER)
+					//		.setHardTimeout(capabilities.recordTimeLeft(address)).build();
+					//sw.write(flow);
 
 					// allow the processed packet to flow with a PACKET_OUT
-					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).build());
+					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
 					return Command.STOP;
 				} else {
 					logger.debug("[WEB] Request denied");
 					// create a flow that will allow packets for the rest of the
 					// capability life time with a FLOW_MOD
-					OFFlowAdd flow = factory.buildFlowAdd()
-							.setMatch(factory.buildMatch().setExact(MatchField.IN_PORT, OFPort.of(1))
-									.setExact(MatchField.IPV4_DST, address)
-									.setExact(MatchField.IPV4_SRC, ip.getSourceAddress())
-									.build())
-							.setActions(actions).setBufferId(OFBufferId.NO_BUFFER)
-							.setHardTimeout(DEFAULT_BLOCK_TIME).build();
-					sw.write(flow);
+					//OFFlowAdd flow = factory.buildFlowAdd()
+					//		.setMatch(factory.buildMatch().setExact(MatchField.IN_PORT, OFPort.of(1))
+					//				.setExact(MatchField.IPV4_DST, address)
+					//				.setExact(MatchField.IPV4_SRC, ip.getSourceAddress())
+					//				.build())
+					//		.setActions(actions).setOutPort(OFPort.of(1)).setBufferId(OFBufferId.NO_BUFFER)
+					//		.setHardTimeout(DEFAULT_BLOCK_TIME).build();
+					//sw.write(flow);
+					return Command.STOP;
 				}
 			}
 
