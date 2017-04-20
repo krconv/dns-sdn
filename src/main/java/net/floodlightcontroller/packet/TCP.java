@@ -22,12 +22,25 @@ import java.util.Arrays;
 
 import org.projectfloodlight.openflow.types.IpProtocol;
 import org.projectfloodlight.openflow.types.TransportPort;
+import org.projectfloodlight.openflow.types.U16;
 
 /**
  *
  * @author shudong.zhou@bigswitch.com
  */
 public class TCP extends BasePacket {
+	public final static U16 FLAG_ACK = U16.of(0x10); // 0001 0000
+	public final static U16 FLAG_SYN = U16.of(0x02); // 0000 0010
+	public final static U16 FLAG_FIN = U16.of(0x01); // 0000 0001
+
+	public final static U16 FLAG_NOT_ACK = U16.of(~(FLAG_ACK.getRaw())); // 1110 1111
+	public final static U16 FLAG_NOT_SYN = U16.of(~(FLAG_SYN.getRaw())); // 1111 1101
+	public final static U16 FLAG_NOT_FIN = U16.of(~(FLAG_FIN.getRaw())); // 1111 1110
+
+	public final static U16 FLAG_ACK_MASK = U16.of(0x10); // 0001 0000
+	public final static U16 FLAG_SYN_MASK = U16.of(0x02); // 0000 0010
+	public final static U16 FLAG_FIN_MASK = U16.of(0x01); // 0000 0001
+	
     protected TransportPort sourcePort;
     protected TransportPort destinationPort;
     protected int sequence;
@@ -119,6 +132,18 @@ public class TCP extends BasePacket {
     public TCP setFlags(short flags) {
         this.flags = flags;
         return this;
+    }
+    public boolean isAck() {
+    	return isFlagSet(FLAG_ACK_MASK, FLAG_ACK);
+    }
+    public boolean isSyn() {
+    	return isFlagSet(FLAG_SYN_MASK, FLAG_SYN);
+    }
+    public boolean isFin() {
+    	return isFlagSet(FLAG_FIN_MASK, FLAG_FIN);
+    }
+    private boolean isFlagSet(U16 mask, U16 flag) {
+    	return (this.flags & mask.getRaw()) == flag.getRaw();
     }
     public short getWindowSize() {
         return this.windowSize;
