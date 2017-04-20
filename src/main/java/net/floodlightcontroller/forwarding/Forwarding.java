@@ -219,7 +219,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 			 * of a link.
 			 */
 			if (dstDap == null) {
-				log.warn("Could not locate edge attachment point for device {}. Flooding packet");
+				log.warn("Could not locate edge attachment point for device {}. Flooding packet", dstDevice.getDeviceKey());
 				doFlood(sw, pi, cntx);
 				return; 
 			}
