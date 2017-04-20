@@ -89,12 +89,12 @@ public abstract class DNSSection {
 	 * @return The length of the parsed name.
 	 */
 	private static int getNameLength(byte[] data, int offset) {
-		if (Byte.toUnsignedInt(data[offset]) > MAX_LABEL_LENGTH)
+		if ((new Byte(data[offset])).intValue() > MAX_LABEL_LENGTH)
 			return 2; // dns shortcut, so fqdn isn't store multiple times
 
 		int length = 0;
 		while (data[offset + length] != 0x00) {
-			length += Byte.toUnsignedInt(data[offset + length]) + 1;
+			length += (new Byte(data[offset + length])).intValue() + 1;
 		}
 		return length + 1; // include null byte
 	}

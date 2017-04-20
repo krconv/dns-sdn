@@ -1745,7 +1745,7 @@ public class OFSwitchHandshakeHandler implements IOFConnectionListener {
 		// FIXME: We don't set the reassembly flags.
 		OFSetConfig configSet = factory.buildSetConfig()
 				.setXid(handshakeTransactionIds--)
-				.setMissSendLen(0xffffffff)
+				.setMissSendLen(65536)
 				.build();
 
 		// Barrier
