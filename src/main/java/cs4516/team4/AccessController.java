@@ -6,6 +6,7 @@ package cs4516.team4;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
 
 import org.projectfloodlight.openflow.protocol.OFFactory;
@@ -22,6 +23,7 @@ import org.projectfloodlight.openflow.types.IpProtocol;
 import org.projectfloodlight.openflow.types.MacAddress;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
+import org.projectfloodlight.openflow.types.TransportPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -45,6 +47,7 @@ import net.floodlightcontroller.packet.TCP;
  * @author Team 4
  */
 public class AccessController implements IOFMessageListener, IFloodlightModule {
+	private static MacAddress CLIENT_MAC_ADDRESS;
 	private static MacAddress DNS_MAC_ADDRESS;
 	private static MacAddress WEBSERVER_MAC_ADDRESS;
 	private static int DEFAULT_BLOCK_TIME;
@@ -137,6 +140,8 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 		// check the configuration for the the set MAC addresses
 		Map<String, String> configParameters = context.getConfigParams(this);
 		logger.debug(Arrays.toString(configParameters.keySet().toArray()));
+		if (!configParameters.containsKey("clientMACAddress"))
+			throw new FloodlightModuleException("\"clientMACAddress\" not set in configuration!");
 		if (!configParameters.containsKey("dnsMACAddress"))
 			throw new FloodlightModuleException("\"dnsMACAddress\" not set in configuration!");
 		if (!configParameters.containsKey("webserverMACAddress"))
@@ -145,7 +150,8 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 			throw new FloodlightModuleException("\"defaultBlockTime\" not set in configuration!");
 		if (!configParameters.containsKey("defaultFlowPriority"))
 			throw new FloodlightModuleException("\"defaultFlowPriority\" not set in configuration!");
-		
+
+		CLIENT_MAC_ADDRESS = MacAddress.of(configParameters.get("clientMACAddress"));
 		DNS_MAC_ADDRESS = MacAddress.of(configParameters.get("dnsMACAddress"));
 		WEBSERVER_MAC_ADDRESS = MacAddress.of(configParameters.get("webserverMACAddress"));
 		DEFAULT_BLOCK_TIME = Integer.parseInt(configParameters.get("defaultBlockTime"));
@@ -188,8 +194,24 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 		IPv4 ip = (IPv4) ethernet.getPayload();
 		IpProtocol protocol = ip.getProtocol();
 		OFPort portIn = ((OFPacketIn) msg).getMatch().get(MatchField.IN_PORT);
-
-		if (protocol == IpProtocol.UDP && (sourceMac.equals(DNS_MAC_ADDRESS) || destMac.equals(DNS_MAC_ADDRESS))) { // dns server
+		if (protocol == IpProtocol.TCP && (sourceMac.equals(CLIENT_MAC_ADDRESS) || destMac.equals(CLIENT_MAC_ADDRESS))) { // client
+			TCP tcp = (TCP) ip.getPayload();
+			if (portIn == OFPort.LOCAL) { // message originating from client
+				if (tcp.isSyn() && !tcp.isAck()) { // syn originating from within; map it to virtual IP
+					logger.debug("[CLIENT] SYN packet sent to {}", ip.getDestinationAddress());
+					TransportPort sourcePort = tcp.getSourcePort();
+					IPv4Address modifiedIP = null; // = NATManager.getInstance().addRecord(sourcePort);
+					logger.debug("[CLIENT] Writing NAT flows mapping {} to {} on port " + sourcePort.getPort() , ip.getSourceAddress(), modifiedIP);
+					writeNATFlows(sw, ip.getSourceAddress(), modifiedIP, sourcePort);
+					return Command.STOP;
+				} else if (tcp.isFin()) {
+					// TODO either remove nat flows from switch or change timeout
+					// TODO remove nat entry from our NATManager
+					logger.debug("[CLIENT] FIN packet sent to {}", ip.getDestinationAddress());
+				}
+			}
+			
+		} else if (protocol == IpProtocol.UDP && (sourceMac.equals(DNS_MAC_ADDRESS) || destMac.equals(DNS_MAC_ADDRESS))) { // dns server
 			if (portIn == OFPort.LOCAL) { // message originating from DNS server
 				UDP udp = (UDP) ip.getPayload();
 				if (udp.getSourcePort().getPort() != DNS.DNS_PORT)
@@ -289,5 +311,56 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 			}
 		}
 		return Command.CONTINUE;
+	}
+	
+	/**
+	 * Writes the flows associated with the given NAT information.
+	 * @param sw The switch to write to.
+	 * @param original The original IP address.
+	 * @param modified The virtual IP address. 
+	 * @param port The source port to match.
+	 */
+	private void writeNATFlows(IOFSwitch sw, IPv4Address original, IPv4Address modified, TransportPort port) {
+		// add outgoing rule
+		OFFactory factory = sw.getOFFactory();
+		List<OFAction> actions = new ArrayList<OFAction>();
+		actions.add(factory.actions().buildSetNwSrc().setNwAddr(modified).build());
+		actions.add(factory.actions().buildOutput().setPort(OFPort.of(1)).build());
+		Match match = factory.buildMatch()
+				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+				.setExact(MatchField.IPV4_SRC, original)
+				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+				.setExact(MatchField.TCP_SRC, port)
+				.setMasked(MatchField.BSN_TCP_FLAGS, TCP.FLAG_NOT_FIN, TCP.FLAG_FIN_MASK)
+				.build();
+		OFFlowAdd flow = factory.buildFlowAdd()
+				.setMatch(match)
+				.setActions(actions)
+				.setOutPort(OFPort.of(1))
+				.setBufferId(OFBufferId.NO_BUFFER)
+				.setIdleTimeout(60) // TODO decide on what to do with timeouts
+				.setPriority(DEFAULT_FLOW_PRIORITY)
+				.build();
+		sw.write(flow);
+		
+		// add incoming rule
+		actions.clear();
+		actions.add(factory.actions().buildSetNwDst().setNwAddr(original).build());
+		actions.add(factory.actions().buildOutput().setPort(OFPort.LOCAL).build());
+		match = factory.buildMatch()
+				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+				.setExact(MatchField.IPV4_DST, modified)
+				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+				.setExact(MatchField.TCP_DST, port)
+				.build();
+		flow = factory.buildFlowAdd()
+				.setMatch(match)
+				.setActions(actions)
+				.setOutPort(OFPort.LOCAL)
+				.setBufferId(OFBufferId.NO_BUFFER)
+				.setIdleTimeout(60) // TODO decide on what to do with timeouts
+				.setPriority(DEFAULT_FLOW_PRIORITY)
+				.build();
+		sw.write(flow);
 	}
 }
