@@ -48,6 +48,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	private static MacAddress DNS_MAC_ADDRESS;
 	private static MacAddress WEBSERVER_MAC_ADDRESS;
 	private static int DEFAULT_BLOCK_TIME;
+	private static int DEFAULT_FLOW_PRIORITY;
 
 	protected IFloodlightProviderService floodlightProvider;
 	protected static Logger logger;
@@ -138,14 +139,17 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 		logger.debug(Arrays.toString(configParameters.keySet().toArray()));
 		if (!configParameters.containsKey("dnsMACAddress"))
 			throw new FloodlightModuleException("\"dnsMACAddress\" not set in configuration!");
-		else if (!configParameters.containsKey("webserverMACAddress"))
+		if (!configParameters.containsKey("webserverMACAddress"))
 			throw new FloodlightModuleException("\"webserverMACAddress\" not set in configuration!");
-		else if (!configParameters.containsKey("defaultBlockTime"))
+		if (!configParameters.containsKey("defaultBlockTime"))
 			throw new FloodlightModuleException("\"defaultBlockTime\" not set in configuration!");
+		if (!configParameters.containsKey("defaultFlowPriority"))
+			throw new FloodlightModuleException("\"defaultFlowPriority\" not set in configuration!");
 		
 		DNS_MAC_ADDRESS = MacAddress.of(configParameters.get("dnsMACAddress"));
 		WEBSERVER_MAC_ADDRESS = MacAddress.of(configParameters.get("webserverMACAddress"));
 		DEFAULT_BLOCK_TIME = Integer.parseInt(configParameters.get("defaultBlockTime"));
+		DEFAULT_FLOW_PRIORITY = Integer.parseInt(configParameters.get("defaultFlowPriority"));
 	}
 
 	/*
@@ -253,7 +257,9 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 							.setActions(actions)
 							.setOutPort(OFPort.LOCAL)
 							.setBufferId(OFBufferId.NO_BUFFER)
-							.setHardTimeout(capabilities.recordTimeLeft(address)).build();
+							.setHardTimeout(capabilities.recordTimeLeft(address))
+							.setPriority(DEFAULT_FLOW_PRIORITY)
+							.build();
 					sw.write(flow);
 
 					// allow the processed packet to flow with a PACKET_OUT
@@ -274,7 +280,9 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 							.setMatch(match)
 							.setActions(actions)
 							.setBufferId(OFBufferId.NO_BUFFER)
-							.setHardTimeout(DEFAULT_BLOCK_TIME).build();
+							.setHardTimeout(DEFAULT_BLOCK_TIME)
+							.setPriority(DEFAULT_FLOW_PRIORITY)
+							.build();
 					sw.write(flow);
 					return Command.STOP;
 				}
