@@ -244,6 +244,15 @@ public class DNS extends BasePacket {
 	public int getAnswerCount() {
 		return answerCount;
 	}
+	
+	/**
+	 * Gets whether there are answers in the packet.
+	 * 
+	 * @return Whether there are any answers in the packet.
+	 */
+	public boolean hasAnswer() {
+		return answerCount > 0;
+	}
 
 	/**
 	 * Gets the number of name servers in the packet.

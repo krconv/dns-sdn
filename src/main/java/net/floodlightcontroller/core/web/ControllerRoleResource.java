@@ -29,15 +29,10 @@ import org.restlet.resource.Post;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.MappingJsonFactory;
-
 public class ControllerRoleResource extends ServerResource {
 
     protected static Logger log = LoggerFactory.getLogger(ControllerRoleResource.class);
     
-    private static final String STR_ACTIVE = "ACTIVE";
-    private static final String STR_STANDBY = "STANDBY";
     private static final String STR_ROLE = "role";
     private static final String STR_ROLE_CHANGE_DESC = "role-change-description";
     private static final String STR_ROLE_CHANGE_DATE_TIME = "role-change-date-time";
@@ -58,16 +53,7 @@ public class ControllerRoleResource extends ServerResource {
     @Post
     public Map<String, String> setRole(String json) {
     	Map<String, String> retValue = new HashMap<String, String>();
-
-        IFloodlightProviderService floodlightProvider =
-                (IFloodlightProviderService)getContext().getAttributes().
-                    get(IFloodlightProviderService.class.getCanonicalName());
-        
-		MappingJsonFactory f = new MappingJsonFactory();
-		JsonParser jp = null;
-		String role = null;
-		String roleChangeDesc = null;
-		
+        		
 		retValue.put("TBD", "Not yet implemented");
 		return retValue;
 		/*

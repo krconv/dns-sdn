@@ -1,25 +1,35 @@
 /**
- * 
+ * A DNS-based Capabilities Access Controller.
  */
 package cs4516.team4;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.ConcurrentSkipListSet;
 
+import org.projectfloodlight.openflow.protocol.OFFactory;
+import org.projectfloodlight.openflow.protocol.OFFlowAdd;
 import org.projectfloodlight.openflow.protocol.OFMessage;
+import org.projectfloodlight.openflow.protocol.OFPacketIn;
 import org.projectfloodlight.openflow.protocol.OFType;
+import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.EthType;
 import org.projectfloodlight.openflow.types.IPv4Address;
 import org.projectfloodlight.openflow.types.IpProtocol;
 import org.projectfloodlight.openflow.types.MacAddress;
+import org.projectfloodlight.openflow.types.OFBufferId;
+import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.TransportPort;
-import org.projectfloodlight.openflow.types.VlanVid;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import ch.qos.logback.classic.Logger;
+import cs4516.team4.capablity.CapabilitiesManager;
+import cs4516.team4.dns.DNS;
+import cs4516.team4.dns.DNSResource;
 import net.floodlightcontroller.core.FloodlightContext;
 import net.floodlightcontroller.core.IFloodlightProviderService;
 import net.floodlightcontroller.core.IOFMessageListener;
@@ -28,214 +38,329 @@ import net.floodlightcontroller.core.module.FloodlightModuleContext;
 import net.floodlightcontroller.core.module.FloodlightModuleException;
 import net.floodlightcontroller.core.module.IFloodlightModule;
 import net.floodlightcontroller.core.module.IFloodlightService;
-import net.floodlightcontroller.packet.ARP;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
-import net.floodlightcontroller.packet.PacketParsingException;
-import net.floodlightcontroller.packet.TCP;
 import net.floodlightcontroller.packet.UDP;
+import net.floodlightcontroller.packet.TCP;
 
 /**
  * @author Team 4
- *
  */
 public class AccessController implements IOFMessageListener, IFloodlightModule {
+	private static MacAddress CLIENT_MAC_ADDRESS;
+	private static MacAddress DNS_MAC_ADDRESS;
+	private static MacAddress WEBSERVER_MAC_ADDRESS;
+	private static int DEFAULT_BLOCK_TIME;
+	private static int DEFAULT_FLOW_PRIORITY;
 
 	protected IFloodlightProviderService floodlightProvider;
-	protected Set<Long> macAddresses;
 	protected static Logger logger;
 
-	/* (non-Javadoc)
+	/*
+	 * (non-Javadoc)
+	 * 
 	 * @see net.floodlightcontroller.core.IListener#getName()
 	 */
 	@Override
 	public String getName() {
-		return "CS4516";//MACTracker.class.getSimpleName();
+		return AccessController.class.getSimpleName();
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.IListener#isCallbackOrderingPrereq(java.lang.Object, java.lang.String)
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see
+	 * net.floodlightcontroller.core.IListener#isCallbackOrderingPrereq(java.
+	 * lang.Object, java.lang.String)
 	 */
 	@Override
 	public boolean isCallbackOrderingPrereq(OFType type, String name) {
-		// TODO Auto-generated method stub
 		return false;
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.IListener#isCallbackOrderingPostreq(java.lang.Object, java.lang.String)
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see
+	 * net.floodlightcontroller.core.IListener#isCallbackOrderingPostreq(java.
+	 * lang.Object, java.lang.String)
 	 */
 	@Override
 	public boolean isCallbackOrderingPostreq(OFType type, String name) {
-		// TODO Auto-generated method stub
 		return false;
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.module.IFloodlightModule#getModuleServices()
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see
+	 * net.floodlightcontroller.core.module.IFloodlightModule#getModuleServices(
+	 * )
 	 */
 	@Override
 	public Collection<Class<? extends IFloodlightService>> getModuleServices() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.module.IFloodlightModule#getServiceImpls()
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see
+	 * net.floodlightcontroller.core.module.IFloodlightModule#getServiceImpls()
 	 */
 	@Override
 	public Map<Class<? extends IFloodlightService>, IFloodlightService> getServiceImpls() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.module.IFloodlightModule#getModuleDependencies()
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.floodlightcontroller.core.module.IFloodlightModule#
+	 * getModuleDependencies()
 	 */
 	@Override
 	public Collection<Class<? extends IFloodlightService>> getModuleDependencies() {
-		Collection<Class<? extends IFloodlightService>> l =
-        	new ArrayList<Class<? extends IFloodlightService>>();
-	    l.add(IFloodlightProviderService.class);
-	    return l;
+		Collection<Class<? extends IFloodlightService>> l = new ArrayList<Class<? extends IFloodlightService>>();
+		l.add(IFloodlightProviderService.class);
+		return l;
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.module.IFloodlightModule#init(net.floodlightcontroller.core.module.FloodlightModuleContext)
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.floodlightcontroller.core.module.IFloodlightModule#init(net.
+	 * floodlightcontroller.core.module.FloodlightModuleContext)
 	 */
 	@Override
 	public void init(FloodlightModuleContext context) throws FloodlightModuleException {
 		floodlightProvider = context.getServiceImpl(IFloodlightProviderService.class);
-	    macAddresses = new ConcurrentSkipListSet<Long>();
-//	    logger = LoggerFactory.getLogger(MACTracker.class);
+		logger = LoggerFactory.getLogger(AccessController.class);
 
+		// check the configuration for the the set MAC addresses
+		Map<String, String> configParameters = context.getConfigParams(this);
+		logger.debug(Arrays.toString(configParameters.keySet().toArray()));
+		if (!configParameters.containsKey("clientMACAddress"))
+			throw new FloodlightModuleException("\"clientMACAddress\" not set in configuration!");
+		if (!configParameters.containsKey("dnsMACAddress"))
+			throw new FloodlightModuleException("\"dnsMACAddress\" not set in configuration!");
+		if (!configParameters.containsKey("webserverMACAddress"))
+			throw new FloodlightModuleException("\"webserverMACAddress\" not set in configuration!");
+		if (!configParameters.containsKey("defaultBlockTime"))
+			throw new FloodlightModuleException("\"defaultBlockTime\" not set in configuration!");
+		if (!configParameters.containsKey("defaultFlowPriority"))
+			throw new FloodlightModuleException("\"defaultFlowPriority\" not set in configuration!");
+
+		CLIENT_MAC_ADDRESS = MacAddress.of(configParameters.get("clientMACAddress"));
+		DNS_MAC_ADDRESS = MacAddress.of(configParameters.get("dnsMACAddress"));
+		WEBSERVER_MAC_ADDRESS = MacAddress.of(configParameters.get("webserverMACAddress"));
+		DEFAULT_BLOCK_TIME = Integer.parseInt(configParameters.get("defaultBlockTime"));
+		DEFAULT_FLOW_PRIORITY = Integer.parseInt(configParameters.get("defaultFlowPriority"));
 	}
 
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.module.IFloodlightModule#startUp(net.floodlightcontroller.core.module.FloodlightModuleContext)
+	/*
+	 * (non-Javadoc)
+	 * 
+	 * @see net.floodlightcontroller.core.module.IFloodlightModule#startUp(net.
+	 * floodlightcontroller.core.module.FloodlightModuleContext)
 	 */
 	@Override
 	public void startUp(FloodlightModuleContext context) throws FloodlightModuleException {
 		floodlightProvider.addOFMessageListener(OFType.PACKET_IN, this);
-
 	}
 
-
-
-	/* (non-Javadoc)
-	 * @see net.floodlightcontroller.core.IOFMessageListener#receive(net.floodlightcontroller.core.IOFSwitch, org.projectfloodlight.openflow.protocol.OFMessage, net.floodlightcontroller.core.FloodlightContext)
+	/**
+	 * Handles a PACKET_IN message.
+	 * 
+	 * @param sw
+	 *            The switch that sent the message.
+	 * @param msg
+	 *            The message to handle.
+	 * @param cntx
+	 *            The Floodlight context.
+	 * 
+	 * @return A command determining whether the message should be processed
+	 *         further.
 	 */
 	@Override
-	public net.floodlightcontroller.core.IListener.Command receive(IOFSwitch sw, OFMessage msg,
-			FloodlightContext cntx) {
+	public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
+		Ethernet ethernet = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 
-		switch (msg.getType()) {
-			case PACKET_IN:
-				Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-		 
-				MacAddress srcMac = eth.getSourceMACAddress();
-				VlanVid vlanId = VlanVid.ofVlan(eth.getVlanID());
-		 
-				if (eth.getEtherType() == EthType.IPv4) {
-					IPv4 ipv4 = (IPv4) eth.getPayload();
-					 
-					byte[] ipOptions = ipv4.getOptions();
-					IPv4Address dstIp = ipv4.getDestinationAddress();
-					 
-					if (ipv4.getProtocol() == IpProtocol.TCP) {
-						TCP tcp = (TCP) ipv4.getPayload();
-		  
-						TransportPort srcPort = tcp.getSourcePort();
-						TransportPort dstPort = tcp.getDestinationPort();
-						short flags = tcp.getFlags();
-						 
+		if (ethernet.getEtherType() != EthType.IPv4)
+			return Command.CONTINUE;
 
-						if (CapabilitiesManager.getInstance().verifyRecord(dstIp.getBytes()) == CapabilitiesManager.Action.ALLOW) {
-							// TODO: ALLOW PACKET
-							System.out.println("Allowing packet to flow");
-						} else {
-							// TODO: DROP PACKET
-							System.out.println("Dropping packet!");
-						}
-						
-					} else if (ipv4.getProtocol() == IpProtocol.UDP) {
-						UDP udp = (UDP) ipv4.getPayload();
-		  
-						TransportPort srcPort = udp.getSourcePort();
-						TransportPort dstPort = udp.getDestinationPort();
-						
-						
-						long ttl = extractTTLfromDNS(udp);
-
-						byte[] newIP = CapabilitiesManager.getInstance().addRecord(ttl);
-
-						try {
-							rewriteIPforDNS(udp,newIP);
-						} catch (PacketParsingException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-
-						// TODO: send PACKET_OUT with modified DNS
-						
-					}
-		 
-				} else if (eth.getEtherType() == EthType.ARP) {
-					
-					ARP arp = (ARP) eth.getPayload();
-		 
-					
-					boolean gratuitous = arp.isGratuitous();
-		 
-				} else {
-					// Not sure
+		MacAddress sourceMac = ethernet.getSourceMACAddress();
+		MacAddress destMac = ethernet.getDestinationMACAddress();
+		IPv4 ip = (IPv4) ethernet.getPayload();
+		IpProtocol protocol = ip.getProtocol();
+		OFPort portIn = ((OFPacketIn) msg).getMatch().get(MatchField.IN_PORT);
+		if (protocol == IpProtocol.TCP && (sourceMac.equals(CLIENT_MAC_ADDRESS) || destMac.equals(CLIENT_MAC_ADDRESS))) { // client
+			TCP tcp = (TCP) ip.getPayload();
+			if (portIn == OFPort.LOCAL) { // message originating from client
+				if (tcp.isSyn() && !tcp.isAck()) { // syn originating from within; map it to virtual IP
+					logger.debug("[CLIENT] SYN packet sent to {}", ip.getDestinationAddress());
+					TransportPort sourcePort = tcp.getSourcePort();
+					IPv4Address modifiedIP = null; // = NATManager.getInstance().addRecord(sourcePort);
+					logger.debug("[CLIENT] Writing NAT flows mapping {} to {} on port " + sourcePort.getPort() , ip.getSourceAddress(), modifiedIP);
+					writeNATFlows(sw, ip.getSourceAddress(), modifiedIP, sourcePort);
+					return Command.STOP;
+				} else if (tcp.isFin()) {
+					// TODO either remove nat flows from switch or change timeout
+					// TODO remove nat entry from our NATManager
+					logger.debug("[CLIENT] FIN packet sent to {}", ip.getDestinationAddress());
 				}
-				break;
-			default:
-				break;
+			}
+			
+		} else if (protocol == IpProtocol.UDP && (sourceMac.equals(DNS_MAC_ADDRESS) || destMac.equals(DNS_MAC_ADDRESS))) { // dns server
+			if (portIn == OFPort.LOCAL) { // message originating from DNS server
+				UDP udp = (UDP) ip.getPayload();
+				if (udp.getSourcePort().getPort() != DNS.DNS_PORT)
+					return Command.CONTINUE; // not a dns message
+
+				// handle the DNS message
+				DNS dns = new DNS(udp.getPayload());
+				OFFactory factory = sw.getOFFactory();
+
+				ArrayList<OFAction> actions = new ArrayList<OFAction>();
+				// add an action to forward the packet
+				actions.add(factory.actions().buildOutput().setPort(OFPort.of(1)).build());
+
+				if (dns.hasAnswer()) {
+					logger.debug("[DNS] Response to " + dns.getQueries()[0].getName());
+					boolean modified = false;
+					for (DNSResource answer : dns.getAnswers()) {
+						if (answer.getResourceType() == DNSResource.ResourceType.A) {
+							modified = true;
+							IPv4Address modifiedIP = CapabilitiesManager.getInstance().addRecord(answer.getTTL());
+							logger.debug("[DNS] Response changed from " + answer.getIPv4Address() + " to " + modifiedIP
+									+ " (TTL: " + answer.getTTL() + ")");
+							answer.setIPv4Address(modifiedIP);
+						}
+					}
+
+					// update packet checksum if modified
+					if (modified) {
+						udp.setPayload(dns);
+						dns.resetChecksum();
+					}
+				}
+
+				// forward the dns response
+				sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
+				return Command.STOP;
+			}
+		} else if (protocol == IpProtocol.TCP && (sourceMac.equals(WEBSERVER_MAC_ADDRESS) || destMac.equals(WEBSERVER_MAC_ADDRESS))) { // web server
+			if (portIn != OFPort.LOCAL) { // message originating from client
+				TCP tcp = (TCP) ip.getPayload();
+				if (tcp.getDestinationPort().getPort() != 80)
+					return Command.CONTINUE;
+				IPv4Address address = ip.getDestinationAddress();
+				CapabilitiesManager capabilities = CapabilitiesManager.getInstance();
+				logger.debug("[WEB] Request to " + address);
+
+				OFFactory factory = sw.getOFFactory();
+				ArrayList<OFAction> actions = new ArrayList<OFAction>();
+				if (capabilities.verifyRecord(address) == CapabilitiesManager.Action.ALLOW) {
+					logger.debug("[WEB] Request allowed");
+					// add an action to forward the packet
+					actions.add(factory.actions().buildOutput().setPort(OFPort.LOCAL).build());
+
+					// create a flow that will allow packets for the rest of the
+					// capability life time with a FLOW_MOD
+					Match match = factory.buildMatch()
+							.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+							.setExact(MatchField.IPV4_SRC, ip.getSourceAddress())
+							.setExact(MatchField.IPV4_DST, address)
+							.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+							.setExact(MatchField.TCP_DST, tcp.getDestinationPort())
+							.build();
+					OFFlowAdd flow = factory.buildFlowAdd()
+							.setMatch(match)
+							.setActions(actions)
+							.setOutPort(OFPort.LOCAL)
+							.setBufferId(OFBufferId.NO_BUFFER)
+							.setHardTimeout(capabilities.recordTimeLeft(address))
+							.setPriority(DEFAULT_FLOW_PRIORITY)
+							.build();
+					sw.write(flow);
+
+					// allow the processed packet to flow with a PACKET_OUT
+					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
+					return Command.STOP;
+				} else {
+					logger.debug("[WEB] Request denied");
+					// create a flow that will allow packets for the rest of the
+					// capability life time with a FLOW_MOD
+					Match match = factory.buildMatch()
+							.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+							.setExact(MatchField.IPV4_SRC, ip.getSourceAddress())
+							.setExact(MatchField.IPV4_DST, address)
+							.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+							.setExact(MatchField.TCP_DST, tcp.getDestinationPort())
+							.build();
+					OFFlowAdd flow = factory.buildFlowAdd()
+							.setMatch(match)
+							.setActions(actions)
+							.setBufferId(OFBufferId.NO_BUFFER)
+							.setHardTimeout(DEFAULT_BLOCK_TIME)
+							.setPriority(DEFAULT_FLOW_PRIORITY)
+							.build();
+					sw.write(flow);
+					return Command.STOP;
+				}
+			}
 		}
 		return Command.CONTINUE;
 	}
-
+	
+	/**
+	 * Writes the flows associated with the given NAT information.
+	 * @param sw The switch to write to.
+	 * @param original The original IP address.
+	 * @param modified The virtual IP address. 
+	 * @param port The source port to match.
+	 */
+	private void writeNATFlows(IOFSwitch sw, IPv4Address original, IPv4Address modified, TransportPort port) {
+		// add outgoing rule
+		OFFactory factory = sw.getOFFactory();
+		List<OFAction> actions = new ArrayList<OFAction>();
+		actions.add(factory.actions().buildSetNwSrc().setNwAddr(modified).build());
+		actions.add(factory.actions().buildOutput().setPort(OFPort.of(1)).build());
+		Match match = factory.buildMatch()
+				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+				.setExact(MatchField.IPV4_SRC, original)
+				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+				.setExact(MatchField.TCP_SRC, port)
+				.setMasked(MatchField.BSN_TCP_FLAGS, TCP.FLAG_NOT_FIN, TCP.FLAG_FIN_MASK)
+				.build();
+		OFFlowAdd flow = factory.buildFlowAdd()
+				.setMatch(match)
+				.setActions(actions)
+				.setOutPort(OFPort.of(1))
+				.setBufferId(OFBufferId.NO_BUFFER)
+				.setIdleTimeout(60) // TODO decide on what to do with timeouts
+				.setPriority(DEFAULT_FLOW_PRIORITY)
+				.build();
+		sw.write(flow);
 		
-	private static final int UDP_HEAD_SIZE = 8; // bytes
-	private static final int DNS_OFFSET_DATA = 10; // bytes after name
-	private static final int DNS_OFFSET_TTL = 4; // bytes after name
-
-	private void rewriteIPforDNS(UDP packet, byte[] newIP) throws PacketParsingException {
-		byte[] rawPacket = packet.serialize();
-		int dnsHeaderSize = DNS_OFFSET_DATA + getDNSNameSize(rawPacket); // bytes
-
-		// TODO: we may want to add a verification of the DNS response type to make sure we aren't overwriting packets that don't correspond with an A record
-
-		int totalHead = UDP_HEAD_SIZE + dnsHeaderSize;
-
-		for (int i = 0; i < newIP.length; i++) {
-			rawPacket[totalHead + i] = newIP[i];
-		}
-
-		packet.deserialize(rawPacket,0,packet.getLength());
+		// add incoming rule
+		actions.clear();
+		actions.add(factory.actions().buildSetNwDst().setNwAddr(original).build());
+		actions.add(factory.actions().buildOutput().setPort(OFPort.LOCAL).build());
+		match = factory.buildMatch()
+				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+				.setExact(MatchField.IPV4_DST, modified)
+				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+				.setExact(MatchField.TCP_DST, port)
+				.build();
+		flow = factory.buildFlowAdd()
+				.setMatch(match)
+				.setActions(actions)
+				.setOutPort(OFPort.LOCAL)
+				.setBufferId(OFBufferId.NO_BUFFER)
+				.setIdleTimeout(60) // TODO decide on what to do with timeouts
+				.setPriority(DEFAULT_FLOW_PRIORITY)
+				.build();
+		sw.write(flow);
 	}
-	private int extractTTLfromDNS(UDP packet) {
-		byte[] rawPacket = packet.serialize();
-		int dnsOffset = DNS_OFFSET_TTL + getDNSNameSize(rawPacket); // bytes
-		int offset = UDP_HEAD_SIZE + dnsOffset;
-
-		int result = 0;
-		result += (rawPacket[offset+0] << 24);
-		result += (rawPacket[offset+1] << 16);
-		result += (rawPacket[offset+2] << 8);
-		result += (rawPacket[offset+3]);
-
-		return result;
-	}
-	private int getDNSNameSize(byte[] rawPacket) {
-		int i = UDP_HEAD_SIZE;
-		byte current = rawPacket[i];
-		while (current != 0x00) {
-			current = rawPacket[++i];
-		}
-		return i + 1 - UDP_HEAD_SIZE;
-	}
-
 }
