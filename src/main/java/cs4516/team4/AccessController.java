@@ -50,8 +50,10 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	private static MacAddress CLIENT_MAC_ADDRESS;
 	private static MacAddress DNS_MAC_ADDRESS;
 	private static MacAddress WEBSERVER_MAC_ADDRESS;
-	private static int DEFAULT_BLOCK_TIME;
-	private static int DEFAULT_FLOW_PRIORITY;
+	private static String WEBSERVER_URL;
+	private static int FLOW_IDLE_TIMEOUT;
+	private static int NAT_IDLE_TIMEOUT;
+	private static int FLOW_PRIORITY;
 
 	protected IFloodlightProviderService floodlightProvider;
 	protected static Logger logger;
@@ -139,23 +141,28 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 		// check the configuration for the the set MAC addresses
 		Map<String, String> configParameters = context.getConfigParams(this);
-		logger.debug(Arrays.toString(configParameters.keySet().toArray()));
 		if (!configParameters.containsKey("clientMACAddress"))
 			throw new FloodlightModuleException("\"clientMACAddress\" not set in configuration!");
 		if (!configParameters.containsKey("dnsMACAddress"))
 			throw new FloodlightModuleException("\"dnsMACAddress\" not set in configuration!");
 		if (!configParameters.containsKey("webserverMACAddress"))
 			throw new FloodlightModuleException("\"webserverMACAddress\" not set in configuration!");
-		if (!configParameters.containsKey("defaultBlockTime"))
-			throw new FloodlightModuleException("\"defaultBlockTime\" not set in configuration!");
-		if (!configParameters.containsKey("defaultFlowPriority"))
-			throw new FloodlightModuleException("\"defaultFlowPriority\" not set in configuration!");
+		if (!configParameters.containsKey("webserverURL"))
+			throw new FloodlightModuleException("\"webserverURL\" not set in configuration!");
+		if (!configParameters.containsKey("flowIdleTimeout"))
+			throw new FloodlightModuleException("\"flowIdleTimeout\" not set in configuration!");
+		if (!configParameters.containsKey("natIdleTimeout"))
+			throw new FloodlightModuleException("\"natIdleTimeout\" not set in configuration!");
+		if (!configParameters.containsKey("flowPriority"))
+			throw new FloodlightModuleException("\"flowPriority\" not set in configuration!");
 
 		CLIENT_MAC_ADDRESS = MacAddress.of(configParameters.get("clientMACAddress"));
 		DNS_MAC_ADDRESS = MacAddress.of(configParameters.get("dnsMACAddress"));
 		WEBSERVER_MAC_ADDRESS = MacAddress.of(configParameters.get("webserverMACAddress"));
-		DEFAULT_BLOCK_TIME = Integer.parseInt(configParameters.get("defaultBlockTime"));
-		DEFAULT_FLOW_PRIORITY = Integer.parseInt(configParameters.get("defaultFlowPriority"));
+		WEBSERVER_URL = configParameters.get("webserverURL");
+		FLOW_IDLE_TIMEOUT = Integer.parseInt(configParameters.get("flowIdleTimeout"));
+		NAT_IDLE_TIMEOUT = Integer.parseInt(configParameters.get("natIdleTimeout"));
+		FLOW_PRIORITY = Integer.parseInt(configParameters.get("flowPriority"));
 	}
 
 	/*
@@ -186,36 +193,61 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 	public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
 		Ethernet ethernet = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 
-		if (ethernet.getEtherType() != EthType.IPv4)
-			return Command.CONTINUE;
+		if (ethernet.getEtherType() != EthType.IPv4) {
+			writeAllowFlow(sw, ethernet, true);
+			return Command.STOP;
+		}
 
+		OFPacketIn packet = (OFPacketIn) msg;
+		OFPort portIn = packet.getMatch().get(MatchField.IN_PORT);
 		MacAddress sourceMac = ethernet.getSourceMACAddress();
 		MacAddress destMac = ethernet.getDestinationMACAddress();
 		IPv4 ip = (IPv4) ethernet.getPayload();
 		IpProtocol protocol = ip.getProtocol();
-		OFPort portIn = ((OFPacketIn) msg).getMatch().get(MatchField.IN_PORT);
-		if (protocol == IpProtocol.TCP && (sourceMac.equals(CLIENT_MAC_ADDRESS) || destMac.equals(CLIENT_MAC_ADDRESS))) { // client
+		
+		if (protocol == IpProtocol.TCP
+				&& (sourceMac.equals(CLIENT_MAC_ADDRESS) || destMac.equals(CLIENT_MAC_ADDRESS))) { // client
+			logger.debug("Client");
 			TCP tcp = (TCP) ip.getPayload();
 			if (portIn == OFPort.LOCAL) { // message originating from client
-				if (tcp.isSyn() && !tcp.isAck()) { // syn originating from within; map it to virtual IP
+				OFFactory factory = sw.getOFFactory();
+				TransportPort sourcePort = tcp.getSourcePort();
+				if (tcp.isSyn() && !tcp.isAck()) { // syn originating from
+													// within; map it to virtual
+													// IP
 					logger.debug("[CLIENT] SYN packet sent to {}", ip.getDestinationAddress());
-					TransportPort sourcePort = tcp.getSourcePort();
-					IPv4Address modifiedIP = null; // = NATManager.getInstance().addRecord(sourcePort);
-					logger.debug("[CLIENT] Writing NAT flows mapping {} to {} on port " + sourcePort.getPort() , ip.getSourceAddress(), modifiedIP);
-					writeNATFlows(sw, ip.getSourceAddress(), modifiedIP, sourcePort);
+					IPv4Address modifiedIP = IPv4Address.of("10.45.4.48"); // NATManager.getInstance().addRecord(sourcePort,
+													// NAT_IDLE_TIMEOUT);
+
+					logger.debug("[CLIENT] Writing NAT flows mapping {} to {} on port {}",
+							new Object[] { ip.getSourceAddress(), modifiedIP, sourcePort.getPort() });
+					writeNATFlows(sw, ethernet, modifiedIP);
+
 					return Command.STOP;
 				} else if (tcp.isFin()) {
-					// TODO either remove nat flows from switch or change timeout
+					// TODO either remove nat flows from switch or change
+					// timeout
 					// TODO remove nat entry from our NATManager
 					logger.debug("[CLIENT] FIN packet sent to {}", ip.getDestinationAddress());
+					if (true) { // NATManager.getInstance().verifyRecord(sourcePort))
+								// { // this FIN terminates a NATed connection
+						//IPv4Address modifiedIP = IPv4Address.of("10.45.4.56"); // =
+																				// NATManager.getInstance().addRecord(sourcePort);
+						// removeNATFlows(sw, ip.getSourceAddress(), modifiedIP,
+						// sourcePort);
+					}
+					return Command.STOP;
 				}
 			}
-			
-		} else if (protocol == IpProtocol.UDP && (sourceMac.equals(DNS_MAC_ADDRESS) || destMac.equals(DNS_MAC_ADDRESS))) { // dns server
+		} else if (protocol == IpProtocol.UDP
+				&& (sourceMac.equals(DNS_MAC_ADDRESS) || destMac.equals(DNS_MAC_ADDRESS))) { // dns
+			logger.debug("DNS Server");																					// server
 			if (portIn == OFPort.LOCAL) { // message originating from DNS server
 				UDP udp = (UDP) ip.getPayload();
-				if (udp.getSourcePort().getPort() != DNS.DNS_PORT)
-					return Command.CONTINUE; // not a dns message
+				if (udp.getSourcePort().getPort() != DNS.DNS_PORT) {
+					writeAllowFlow(sw, ethernet, true);
+					return Command.STOP; // not a dns message
+				}
 
 				// handle the DNS message
 				DNS dns = new DNS(udp.getPayload());
@@ -227,6 +259,7 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 
 				if (dns.hasAnswer()) {
 					logger.debug("[DNS] Response to " + dns.getQueries()[0].getName());
+					if (dns.getQueries()[0].getName().equalsIgnoreCase(WEBSERVER_URL)) {
 					boolean modified = false;
 					for (DNSResource answer : dns.getAnswers()) {
 						if (answer.getResourceType() == DNSResource.ResourceType.A) {
@@ -243,123 +276,274 @@ public class AccessController implements IOFMessageListener, IFloodlightModule {
 						udp.setPayload(dns);
 						dns.resetChecksum();
 					}
+					}
 				}
 
 				// forward the dns response
 				sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
 				return Command.STOP;
+			} else {
+				writeAllowFlow(sw, ethernet, false);
+				return Command.STOP;
 			}
-		} else if (protocol == IpProtocol.TCP && (sourceMac.equals(WEBSERVER_MAC_ADDRESS) || destMac.equals(WEBSERVER_MAC_ADDRESS))) { // web server
+		} else if (protocol == IpProtocol.TCP
+				&& (sourceMac.equals(WEBSERVER_MAC_ADDRESS) || destMac.equals(WEBSERVER_MAC_ADDRESS))) { // web
+																											// server
+			logger.debug("Web Server");
 			if (portIn != OFPort.LOCAL) { // message originating from client
 				TCP tcp = (TCP) ip.getPayload();
-				if (tcp.getDestinationPort().getPort() != 80)
-					return Command.CONTINUE;
+				if (tcp.getDestinationPort().getPort() != 80) {
+					writeAllowFlow(sw, ethernet, true);
+					return Command.STOP;
+				}
 				IPv4Address address = ip.getDestinationAddress();
 				CapabilitiesManager capabilities = CapabilitiesManager.getInstance();
 				logger.debug("[WEB] Request to " + address);
 
 				OFFactory factory = sw.getOFFactory();
-				ArrayList<OFAction> actions = new ArrayList<OFAction>();
 				if (capabilities.verifyRecord(address) == CapabilitiesManager.Action.ALLOW) {
-					logger.debug("[WEB] Request allowed");
-					// add an action to forward the packet
-					actions.add(factory.actions().buildOutput().setPort(OFPort.LOCAL).build());
-
 					// create a flow that will allow packets for the rest of the
 					// capability life time with a FLOW_MOD
-					Match match = factory.buildMatch()
-							.setExact(MatchField.ETH_TYPE, EthType.IPv4)
-							.setExact(MatchField.IPV4_SRC, ip.getSourceAddress())
-							.setExact(MatchField.IPV4_DST, address)
-							.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
-							.setExact(MatchField.TCP_DST, tcp.getDestinationPort())
-							.build();
-					OFFlowAdd flow = factory.buildFlowAdd()
-							.setMatch(match)
-							.setActions(actions)
-							.setOutPort(OFPort.LOCAL)
-							.setBufferId(OFBufferId.NO_BUFFER)
-							.setHardTimeout(capabilities.recordTimeLeft(address))
-							.setPriority(DEFAULT_FLOW_PRIORITY)
-							.build();
-					sw.write(flow);
+					logger.debug("[WEB] Request allowed");
+					writeAllowFlow(sw, ethernet, capabilities.recordTimeLeft(address), true);
 
-					// allow the processed packet to flow with a PACKET_OUT
-					sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
 					return Command.STOP;
 				} else {
+					// create a flow that will drop packets
 					logger.debug("[WEB] Request denied");
-					// create a flow that will allow packets for the rest of the
-					// capability life time with a FLOW_MOD
-					Match match = factory.buildMatch()
-							.setExact(MatchField.ETH_TYPE, EthType.IPv4)
-							.setExact(MatchField.IPV4_SRC, ip.getSourceAddress())
-							.setExact(MatchField.IPV4_DST, address)
-							.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
-							.setExact(MatchField.TCP_DST, tcp.getDestinationPort())
-							.build();
-					OFFlowAdd flow = factory.buildFlowAdd()
-							.setMatch(match)
-							.setActions(actions)
-							.setBufferId(OFBufferId.NO_BUFFER)
-							.setHardTimeout(DEFAULT_BLOCK_TIME)
-							.setPriority(DEFAULT_FLOW_PRIORITY)
-							.build();
-					sw.write(flow);
+					writeDenyFlow(sw, ethernet);
+					
 					return Command.STOP;
 				}
 			}
 		}
-		return Command.CONTINUE;
+		writeAllowFlow(sw, ethernet, true);
+		return Command.STOP;
 	}
-	
+
 	/**
 	 * Writes the flows associated with the given NAT information.
-	 * @param sw The switch to write to.
-	 * @param original The original IP address.
-	 * @param modified The virtual IP address. 
-	 * @param port The source port to match.
+	 * 
+	 * @param sw
+	 *            The switch to write to.
+	 * @param original
+	 *            The original IP address.
+	 * @param modified
+	 *            The virtual IP address.
+	 * @param port
+	 *            The source port to match.
 	 */
-	private void writeNATFlows(IOFSwitch sw, IPv4Address original, IPv4Address modified, TransportPort port) {
+	private void writeNATFlows(IOFSwitch sw, Ethernet ethernet, IPv4Address virtual) {
 		// add outgoing rule
 		OFFactory factory = sw.getOFFactory();
 		List<OFAction> actions = new ArrayList<OFAction>();
-		actions.add(factory.actions().buildSetNwSrc().setNwAddr(modified).build());
-		actions.add(factory.actions().buildOutput().setPort(OFPort.of(1)).build());
-		Match match = factory.buildMatch()
-				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
-				.setExact(MatchField.IPV4_SRC, original)
-				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
-				.setExact(MatchField.TCP_SRC, port)
-				.setMasked(MatchField.BSN_TCP_FLAGS, TCP.FLAG_NOT_FIN, TCP.FLAG_FIN_MASK)
-				.build();
-		OFFlowAdd flow = factory.buildFlowAdd()
-				.setMatch(match)
-				.setActions(actions)
-				.setOutPort(OFPort.of(1))
-				.setBufferId(OFBufferId.NO_BUFFER)
-				.setIdleTimeout(60) // TODO decide on what to do with timeouts
-				.setPriority(DEFAULT_FLOW_PRIORITY)
-				.build();
-		sw.write(flow);
-		
+		actions.add(factory.actions().setField(factory.oxms().ipv4Src(virtual)));
+		actions.add(factory.actions().buildOutput().setPort(OFPort.ALL).build());
+					// write the packet out
+					sw.write(factory.buildPacketOut()
+							.setData(ethernet.serialize())
+							.setActions(actions)
+							.build());
+//		Match = factory.buildMatch()
+//				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+//				.setExact(MatchField.IPV4_SRC, original)
+//				.setExact(MatchField.IPV4_DST, destination)
+//				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+//				.setExact(MatchField.TCP_SRC, port);
+		writeFlow(sw, createMatch(factory, ethernet, false), actions, NAT_IDLE_TIMEOUT, FLOW_PRIORITY);
+//                sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
+//		OFFlowAdd flow = factory.buildFlowAdd()
+//				.setMatch(mb.build())
+//				.setActions(actions)
+//				.setOutPort(OFPort.of(1))
+//				.setBufferId(OFBufferId.NO_BUFFER)
+//				.setIdleTimeout(NAT_IDLE_TIMEOUT)
+//				.setPriority(FLOW_PRIORITY)
+//				.build();
+//		sw.write(flow);
+		List<OFAction> actionsInbound = new ArrayList<OFAction>();
+		IPv4Address real = ((IPv4) ethernet.getPayload()).getSourceAddress();
+		((IPv4) ethernet.getPayload()).setSourceAddress(virtual);
+		((IPv4) ethernet.getPayload()).resetChecksum();
+		actionsInbound.add(factory.actions().setField(factory.oxms().ipv4Dst(real)));
+		actionsInbound.add(factory.actions().buildOutput().setPort(OFPort.ALL).build());
+		writeFlow(sw, createMatch(factory, ethernet, true), actionsInbound, NAT_IDLE_TIMEOUT, FLOW_PRIORITY);
 		// add incoming rule
-		actions.clear();
-		actions.add(factory.actions().buildSetNwDst().setNwAddr(original).build());
-		actions.add(factory.actions().buildOutput().setPort(OFPort.LOCAL).build());
-		match = factory.buildMatch()
-				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
-				.setExact(MatchField.IPV4_DST, modified)
-				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
-				.setExact(MatchField.TCP_DST, port)
-				.build();
-		flow = factory.buildFlowAdd()
+//		actions.clear();
+//		actions.add(factory.actions().buildSetField().setField(factory.oxms().ipv4Dst(ip.getSourceAddress())).build());
+//		actions.add(factory.actions().buildOutput().setPort(OFPort.ALL).build());
+//		
+//                Match.Builder mb = factory.buildMatch()
+//                                .setExact(MatchField.ETH_TYPE, ethernet.getEtherType());
+//
+//                mb.setExact(MatchField.IPV4_SRC, ip.getDestinationAddress());
+//                mb.setExact(MatchField.IPV4_DST, virtual);
+//                mb.setExact(MatchField.IP_PROTO, ip.getProtocol());
+
+                        // transport layer
+//                TCP tcp = (TCP) ip.getPayload();
+//                mb.setExact(MatchField.TCP_SRC, tcp.getDestinationPort());
+//                mb.setExact(MatchField.TCP_DST, tcp.getSourcePort());
+
+//		writeFlow(sw, mb.build(), actions, NAT_IDLE_TIMEOUT, FLOW_PRIORITY);
+//		mb = factory.buildMatch()
+//				.setExact(MatchField.ETH_TYPE, EthType.IPv4)
+//				.setExact(MatchField.IPV4_SRC, destination)
+//				.setExact(MatchField.IPV4_DST, modified)
+//				.setExact(MatchField.IP_PROTO, IpProtocol.TCP)
+//				.setExact(MatchField.TCP_DST, port);
+//		writeFlow(sw, mb.build(), actions, NAT_IDLE_TIMEOUT, FLOW_PRIORITY);
+//		flow = factory.buildFlowAdd()
+//				.setMatch(mb.build())
+//				.setActions(actions)
+//				.setOutPort(OFPort.LOCAL)
+//				.setBufferId(OFBufferId.NO_BUFFER)
+//				.setIdleTimeout(NAT_IDLE_TIMEOUT)
+//				.setPriority(FLOW_PRIORITY)
+//				.build();
+//		sw.write(flow);
+//
+//		// add flows to elevate all fin packets to controller
+//		actions.clear();
+//		actions.add(factory.actions().buildOutput().setPort(OFPort.CONTROLLER).build());
+//		match = factory.buildMatch().setExact(MatchField.ETH_TYPE, EthType.IPv4).setExact(MatchField.IPV4_SRC, original)
+//				.setExact(MatchField.IP_PROTO, IpProtocol.TCP).setExact(MatchField.TCP_DST, port)
+//				.setMasked(MatchField.BSN_TCP_FLAGS, TCP.FLAG_FIN, TCP.FLAG_FIN_MASK).build();
+//		flow = factory.buildFlowAdd().setMatch(match).setActions(actions).setBufferId(OFBufferId.NO_BUFFER)
+//				.setIdleTimeout(NAT_IDLE_TIME).setPriority(FLOW_PRIORITY).build();
+//		sw.write(flow);
+//
+//		match = factory.buildMatch().setExact(MatchField.ETH_TYPE, EthType.IPv4).setExact(MatchField.IPV4_DST, modified)
+//				.setExact(MatchField.IP_PROTO, IpProtocol.TCP).setExact(MatchField.TCP_DST, port)
+//				.setMasked(MatchField.BSN_TCP_FLAGS, TCP.FLAG_FIN, TCP.FLAG_FIN_MASK).build();
+//		flow = factory.buildFlowAdd().setMatch(match).setActions(actions).setBufferId(OFBufferId.NO_BUFFER)
+//				.setIdleTimeout(NAT_IDLE_TIME).setPriority(FLOW_PRIORITY).build();
+//		sw.write(flow);
+	}
+	
+	/**
+	 * Creates a match based on the given packet.
+	 * @param factory A factory to create the match.
+	 * @param ethernet The data link layer of the packet to match.
+	 * @param reply Whether the match should be made for the given message or a reply to it.
+	 * @return A match for the given packet.
+	 */
+	private Match createMatch(OFFactory factory, Ethernet ethernet, boolean reply) {
+		Match.Builder mb = factory.buildMatch()
+				.setExact(MatchField.ETH_TYPE, ethernet.getEtherType());
+		
+		if (ethernet.getEtherType() == EthType.IPv4) {
+			IPv4 ip = (IPv4) ethernet.getPayload();
+			mb.setExact(MatchField.IPV4_SRC, !reply ? ip.getSourceAddress() : ip.getDestinationAddress());
+			mb.setExact(MatchField.IPV4_DST, !reply ? ip.getDestinationAddress() : ip.getSourceAddress());
+			mb.setExact(MatchField.IP_PROTO, ip.getProtocol());
+
+			// transport layer
+			if (ip.getProtocol() == IpProtocol.TCP) {
+				TCP tcp = (TCP) ip.getPayload();
+				mb.setExact(MatchField.TCP_SRC, !reply ? tcp.getSourcePort() : tcp.getDestinationPort());
+				mb.setExact(MatchField.TCP_DST, !reply ? tcp.getDestinationPort() : tcp.getSourcePort());
+			} else if (ip.getProtocol() == IpProtocol.UDP) {
+				UDP udp = (UDP) ip.getPayload();
+				mb.setExact(MatchField.UDP_SRC, !reply ? udp.getSourcePort() : udp.getDestinationPort());
+				mb.setExact(MatchField.UDP_DST, !reply ? udp.getDestinationPort() : udp.getSourcePort());
+			}
+		}		
+		
+		return mb.build();
+	}
+
+	/**
+	 * Writes a flow that will allow packets for the default amount of time.
+	 * @param sw The switch to write to.
+	 * @param ethernet The data link layer of the packet to match.
+	 */
+	private void writeAllowFlow(IOFSwitch sw, Ethernet ethernet, boolean bidirectional) {
+		writeAllowFlow(sw, ethernet, FLOW_IDLE_TIMEOUT, bidirectional);
+	}
+	
+	/**
+	 * Writes a flow that will allow packets matching the given one for the given amount of time.
+	 * @param sw The switch to write to.
+	 * @param ethernet The data link layer of the packet to match.
+	 * @param timeout The hard timeout for the flow.
+	 */
+	private void writeAllowFlow(IOFSwitch sw, Ethernet ethernet, int timeout, boolean bidirectional) {
+		ArrayList<OFAction> actions = new ArrayList<OFAction>();
+		OFFactory factory = sw.getOFFactory();
+		
+		actions.add(factory.actions().buildOutput().setPort(OFPort.ALL).build());
+		
+		writeFlow(sw, createMatch(factory, ethernet, false), actions, timeout);
+		if (bidirectional)
+			writeFlow(sw, createMatch(factory, ethernet, true), actions, timeout);
+		sw.write(factory.buildPacketOut().setData(ethernet.serialize()).setActions(actions).build());
+	}
+	
+	/**
+	 * Writes a flow that will deny packets matching the given one for the default amount of time.
+	 * @param sw The switch to write to.
+	 * @param ethernet The data link layer of the packet to match.
+	 */
+	private void writeDenyFlow(IOFSwitch sw, Ethernet ethernet) {
+		writeFlow(sw, createMatch(sw.getOFFactory(), ethernet, false), new ArrayList<OFAction>());
+	}
+
+	/**
+	 * Writes a flow to the given switch.
+	 * 
+	 * @param sw
+	 *            The switch to write to.
+	 * @param match
+	 *            The match for the flow.
+	 * @param actions
+	 *            The actions for the flow.
+	 */
+	private void writeFlow(IOFSwitch sw, Match match, List<OFAction> actions) {
+		writeFlow(sw, match, actions, FLOW_IDLE_TIMEOUT);
+	}
+
+	/**
+	 * Writes a flow to the given switch.
+	 * 
+	 * @param sw
+	 *            The switch to write to.
+	 * @param match
+	 *            The match for the flow.
+	 * @param actions
+	 *            The actions for the flow.
+	 * @param timeout
+	 *            The hard timeout for the flow.
+	 */
+	private void writeFlow(IOFSwitch sw, Match match, List<OFAction> actions, int timeout) {
+		writeFlow(sw, match, actions, timeout,
+				actions == null || actions.isEmpty() ? FLOW_PRIORITY / 2 : FLOW_PRIORITY);
+	}
+
+	/**
+	 * Writes a flow to the given switch.
+	 * 
+	 * @param sw
+	 *            The switch to write to.
+	 * @param match
+	 *            The match for the flow.
+	 * @param actions
+	 *            The actions for the flow.
+	 * @param timeout
+	 *            The hard timeout for the flow.
+	 * @param priority
+	 *            The priority for the flow.
+	 */
+	private void writeFlow(IOFSwitch sw, Match match, List<OFAction> actions, int timeout, int priority) {
+		if (match.toString().contains("10.45.4."))
+			logger.debug("Writing flow matching {} with actions {} to {}", 
+					new Object[] { match, Arrays.deepToString(actions.toArray()), sw.getInetAddress()});
+		OFFlowAdd flow = sw.getOFFactory().buildFlowAdd()
 				.setMatch(match)
 				.setActions(actions)
-				.setOutPort(OFPort.LOCAL)
 				.setBufferId(OFBufferId.NO_BUFFER)
-				.setIdleTimeout(60) // TODO decide on what to do with timeouts
-				.setPriority(DEFAULT_FLOW_PRIORITY)
+				.setIdleTimeout(timeout)
+				.setPriority(priority)
 				.build();
 		sw.write(flow);
 	}
