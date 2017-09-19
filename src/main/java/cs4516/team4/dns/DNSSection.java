@@ -49,7 +49,15 @@ public abstract class DNSSection {
 	 * @return The name.
 	 */
 	public String getName() {
-		return new String(name);
+		String result = new String(); // convert DNS format of name to printable (add periods)
+		int nextLabel = 0;
+		for (int i = 0; i < name.length; i++)
+			if (i == nextLabel) {
+				result = result.concat(".");
+				nextLabel += name[i] + 1;
+			} else
+				result = result.concat("" + (char) name[i]);
+		return result;
 	}
 
 	/**
@@ -89,7 +97,7 @@ public abstract class DNSSection {
 	 * @return The length of the parsed name.
 	 */
 	private static int getNameLength(byte[] data, int offset) {
-		if ((new Byte(data[offset])).intValue() > MAX_LABEL_LENGTH)
+		if ((new Byte(data[offset])).intValue() < 0)
 			return 2; // dns shortcut, so fqdn isn't store multiple times
 
 		int length = 0;

@@ -63,5 +63,4 @@ public class Capability {
 	public boolean isExpired() {
 		return getTimeLeft() > 0;
 	}
-
 }
